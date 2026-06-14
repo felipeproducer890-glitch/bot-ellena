@@ -1,7 +1,8 @@
-const { default: makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion, DisconnectReason, Browsers } = require("@whiskeysockets/baileys");
+const { default: makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion, DisconnectReason, Browsers, initAuthCreds, BufferJSON, proto } = require("@whiskeysockets/baileys");
 const pino = require("pino");
 const express = require('express');
 const cron = require('node-cron');
+const { MongoClient } = require('mongodb');
 
 const app = express();
 let qrCodeTexto = null;
@@ -29,8 +30,81 @@ const regexPalavrao = new RegExp(`\\b(${PALAVRAS_BANIDAS.join('|')})\\b`, 'i');
 const avisos = {}; 
 let codigoJaSolicitado = false;
 
+// --- FUNÇÃO DE SESSÃO MONGO ---
+async function useMongoDBAuthState(collection) {
+    const writeData = async (data, id) => {
+        await collection.replaceOne(
+            { _id: id },
+            { _id: id, data: JSON.parse(JSON.stringify(data, BufferJSON.replacer)) },
+            { upsert: true }
+        );
+    };
+
+    const readData = async (id) => {
+        try {
+            const res = await collection.findOne({ _id: id });
+            if (!res) return null;
+            return JSON.parse(JSON.stringify(res.data), BufferJSON.reviver);
+        } catch { return null; }
+    };
+
+    const removeData = async (id) => {
+        try { await collection.deleteOne({ _id: id }); } catch {}
+    };
+
+    let creds = await readData('creds');
+    if (!creds) {
+        creds = initAuthCreds();
+        await writeData(creds, 'creds');
+    }
+
+    return {
+        state: {
+            creds,
+            keys: {
+                get: async (type, ids) => {
+                    const data = {};
+                    for (const id of ids) {
+                        let value = await readData(`${type}-${id}`);
+                        if (type === 'app-state-sync-key' && value) {
+                            value = proto.Message.AppStateSyncKeyData.fromObject(value);
+                        }
+                        data[id] = value;
+                    }
+                    return data;
+                },
+                set: async (data) => {
+                    for (const category in data) {
+                        for (const id in data[category]) {
+                            const value = data[category][id];
+                            const key = `${category}-${id}`;
+                            if (value) await writeData(value, key);
+                            else await removeData(key);
+                        }
+                    }
+                }
+            }
+        },
+        saveCreds: async () => {
+            await writeData(creds, 'creds');
+        }
+    };
+}
+
+// --- CONEXÃO PRINCIPAL ---
 async function connectToWhatsApp() {
-    const { state, saveCreds } = await useMultiFileAuthState('sessao_ellena_v20_hybrid');
+    const mongoUri = process.env.MONGODB_URI;
+    if (!mongoUri) {
+        console.log("❌ ERRO: A variável MONGODB_URI não foi configurada no Render!");
+        return;
+    }
+    
+    const mongoClient = new MongoClient(mongoUri);
+    await mongoClient.connect();
+    const db = mongoClient.db('ellena_bot');
+    const collection = db.collection('session');
+
+    const { state, saveCreds } = await useMongoDBAuthState(collection);
     const { version } = await fetchLatestBaileysVersion();
 
     const sock = makeWASocket({
@@ -57,15 +131,17 @@ async function connectToWhatsApp() {
         const { connection, lastDisconnect, qr } = u;
         if (qr) qrCodeTexto = qr;
         if (connection === "open") {
-            console.log("✅ ELLENA CONECTADA!");
+            console.log("✅ ELLENA CONECTADA E SALVA NA NUVEM!");
             qrCodeTexto = null;
         }
         if (connection === "close") {
-            if (lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut) connectToWhatsApp();
+            if (lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut) {
+                connectToWhatsApp();
+            }
         }
     });
 
-    // --- 1. MÓDULO DE BOAS-VINDAS ---
+    // --- MÓDULO DE BOAS-VINDAS ---
     sock.ev.on("group-participants.update", async (anu) => {
         if (anu.action === 'add') {
             const metadata = await sock.groupMetadata(anu.id);
@@ -73,11 +149,7 @@ async function connectToWhatsApp() {
             
             for (const num of anu.participants) {
                 const saudacao = `🍷Sejam muito bem-vindos(a) @${num.split('@')[0]} ao grupo *${nomeGrupo}*\n\npara mantermos o grupo organizado e agradável para todos, por favor, fique atento às nossas diretrizes.\n\n⚠️*ATENÇÃO*:SIGA AS REGRAS\n\n🪻 sᴇᴍ ᴄᴏɴᴛᴇᴜ́ᴅᴏ +18\n🍷 sᴇᴍ ʟɪɴᴋs sᴇ ɴᴀ̃ᴏ ᴛɪᴠᴇʀ ᴘᴀʀᴄᴇʀɪᴀ\n🪻 sᴇᴍ ʟɪɴᴋs ᴅᴇ ᴊᴏɢᴏs ᴅᴇ ᴀᴘᴏsᴛᴀs 💀\n🍷 ɴᴀ̃ᴏ ᴘᴏᴅᴇ ɪɴᴠᴀᴅɪʀ ᴘᴠ sᴇᴍ ᴘᴇʀᴍɪssᴀ̃ᴏ ᴇ ɴᴀᴅᴀ ǫᴜᴇ ᴇɴᴠᴏʟᴠᴀ ᴠᴇɴᴅᴀ\n 🍷 sᴇᴍ ᴘᴀʟᴀᴠʀᴏ̃ᴇs\n\nADMs\n\n🍷https://www.instagram.com/_.evelyn.sx?igsh=MTJrMWc0dzZkc2xsbg==\n\n 🍷https://www.instagram.com/eofelipeaqui/`;
-                
-                await sock.sendMessage(anu.id, { 
-                    text: saudacao, 
-                    mentions: [num] 
-                });
+                await sock.sendMessage(anu.id, { text: saudacao, mentions: [num] });
             }
         }
     });
@@ -90,7 +162,7 @@ async function connectToWhatsApp() {
         const sender = msg.key.participant || msg.key.remoteJid;
         const texto = (msg.message.conversation || msg.message.extendedTextMessage?.text || "").toLowerCase().trim();
 
-        // --- 2. SISTEMA INTELIGENTE DE FILTRAGEM DE LINKS ---
+        // --- SISTEMA INTELIGENTE DE FILTRAGEM DE LINKS ---
         const linksEncontrados = texto.match(/https?:\/\/[^\s]+|www\.[^\s]+/gi);
         
         if (from.endsWith('@g.us') && linksEncontrados && !AUTORIZADOS.includes(sender)) {
@@ -100,17 +172,12 @@ async function connectToWhatsApp() {
             for (let link of linksEncontrados) {
                 const isInstagram = link.includes("instagram.com");
                 const isTikTok = link.includes("tiktok.com");
-                const isKwai = link.includes("kwai"); // Deixa livre links do Kwai (.com, .video, etc)
+                const isKwai = link.includes("kwai"); 
                 const isWhatsApp = link.includes("wa.me") || link.includes("whatsapp.com") || link.includes("chat.whatsapp");
 
                 if (isWhatsApp) {
-                    // Se for link de WhatsApp mas NÃO tiver a palavra "parceria" no texto, apaga
-                    if (!temParceria) {
-                        deveApagar = true;
-                        break;
-                    }
+                    if (!temParceria) { deveApagar = true; break; }
                 } else if (!isInstagram && !isTikTok && !isKwai) {
-                    // Se não for Insta, TikTok nem Kwai, apaga direto
                     deveApagar = true;
                     break;
                 }
@@ -118,8 +185,7 @@ async function connectToWhatsApp() {
 
             if (deveApagar) {
                 try {
-                    await sock.sendMessage(from, { delete: msg.key }); // Deleta o link invasor
-                    
+                    await sock.sendMessage(from, { delete: msg.key }); 
                     const admsMencionados = AUTORIZADOS.map(id => `@${id.split('@')[0]}`).join(' ');
                     await sock.sendMessage(from, { 
                         text: `🚫𝑳𝒊𝒏𝒌 𝒏𝒂̃𝒐 𝒂𝒖𝒕𝒐𝒓𝒊𝒛𝒂𝒅𝒐\n𝘾𝙤𝙣𝙩𝙧𝙖𝙩𝙚 𝙖𝙡𝙜𝙪𝙢 𝙖𝙙𝙢 𝙥𝙧𝙖 𝙥𝙖𝙧𝙘𝙚𝙧𝙞𝙖🫵🏽\n\n${admsMencionados}`, 
@@ -130,7 +196,7 @@ async function connectToWhatsApp() {
             }
         }
 
-        // --- 3. SISTEMA DE STRIKES (PALAVRÕES) ---
+        // --- SISTEMA DE STRIKES (PALAVRÕES) ---
         if (from.endsWith('@g.us') && regexPalavrao.test(texto)) {
             await sock.sendMessage(from, { delete: msg.key });
             avisos[from] = avisos[from] || {};
@@ -144,18 +210,78 @@ async function connectToWhatsApp() {
             return;
         }
 
+        // --- COMANDO DE MENU INTERATIVO ---
         if (texto === '.oi' || texto === '.menu') {
-            await sock.sendMessage(from, { text: "🌸 *ELLENA BOT*\n\n.adms | .menu\n\n*ADM:*\n.abrir | .fechar | .ban" });
+            // Se o comando for enviado no PRIVADO e por um ADM AUTORIZADO
+            if (!from.endsWith('@g.us') && AUTORIZADOS.includes(sender)) {
+                try {
+                    const groups = await sock.groupFetchAllParticipating();
+                    const groupList = Object.values(groups).sort((a, b) => (a.subject || "").localeCompare(b.subject || ""));
+                    
+                    if (groupList.length === 0) {
+                        await sock.sendMessage(from, { text: "🌸 *ELLENA BOT*\n\nVocê ainda não adicionou o bot em nenhum grupo." });
+                        return;
+                    }
+
+                    let resposta = "🌸 *ELLENA BOT - PAINEL DE CONTROLE* 🌸\n\n";
+                    resposta += "Escolha o grupo que deseja gerenciar remotamente:\n\n";
+                    
+                    groupList.forEach((group, index) => {
+                        resposta += `${index + 1}️⃣ *${group.subject}*\n`;
+                        resposta += `  ↳ Abrir: \`.abrir ${index + 1}\`\n`;
+                        resposta += `  ↳ Fechar: \`.fechar ${index + 1}\`\n\n`;
+                    });
+
+                    resposta += "💡 _Dica: Basta copiar e enviar o comando correspondente ao grupo desejado._";
+                    await sock.sendMessage(from, { text: resposta });
+                } catch (e) {
+                    await sock.sendMessage(from, { text: "❌ Erro ao ler a lista de grupos." });
+                }
+            } else {
+                // Menu padrão caso seja enviado dentro de um grupo ou por alguém comum
+                await sock.sendMessage(from, { text: "🌸 *ELLENA BOT*\n\n.adms | .menu\n\n*ADM:*\n.abrir | .fechar | .ban" });
+            }
+            return;
         }
 
+        // --- EXECUÇÃO DE COMANDOS DO PAINEL REMOTO (NO PRIVADO) ---
         if (AUTORIZADOS.includes(sender)) {
-            if (texto === '.abrir') await sock.groupSettingUpdate(from, 'not_announcement');
-            if (texto === '.fechar') await sock.groupSettingUpdate(from, 'announcement');
+            if (from.endsWith('@g.us')) {
+                // Comandos tradicionais executados de dentro do grupo
+                if (texto === '.abrir') await sock.groupSettingUpdate(from, 'not_announcement');
+                if (texto === '.fechar') await sock.groupSettingUpdate(from, 'announcement');
+            } else {
+                // Comandos remotos via Privado (.abrir X ou .fechar X)
+                if (texto.startsWith('.abrir ')) {
+                    const idx = parseInt(texto.replace('.abrir ', '').trim()) - 1;
+                    const groups = await sock.groupFetchAllParticipating();
+                    const groupList = Object.values(groups).sort((a, b) => (a.subject || "").localeCompare(b.subject || ""));
+                    
+                    if (groupList[idx]) {
+                        await sock.groupSettingUpdate(groupList[idx].id, 'not_announcement');
+                        await sock.sendMessage(from, { text: `✅ O grupo *${groupList[idx].subject}* foi ABERTO com sucesso remotamente!` });
+                    } else {
+                        await sock.sendMessage(from, { text: "❌ Número do grupo inválido. Verifique o `.menu`" });
+                    }
+                }
+
+                if (texto.startsWith('.fechar ')) {
+                    const idx = parseInt(texto.replace('.fechar ', '').trim()) - 1;
+                    const groups = await sock.groupFetchAllParticipating();
+                    const groupList = Object.values(groups).sort((a, b) => (a.subject || "").localeCompare(b.subject || ""));
+                    
+                    if (groupList[idx]) {
+                        await sock.groupSettingUpdate(groupList[idx].id, 'announcement');
+                        await sock.sendMessage(from, { text: `🔒 O grupo *${groupList[idx].subject}* foi FECHADO com sucesso remotamente!` });
+                    } else {
+                        await sock.sendMessage(from, { text: "❌ Número do grupo inválido. Verifique o `.menu`" });
+                    }
+                }
+            }
         }
     });
 
     // --- ROTINAS AUTOMATIZADAS (CRON JOBS) ---
-    // Repouso Noturno (22h)
     cron.schedule('0 22 * * *', async () => {
         const groups = await sock.groupFetchAllParticipating();
         for (let id in groups) { 
@@ -164,7 +290,6 @@ async function connectToWhatsApp() {
         }
     }, { timezone: "America/Sao_Paulo" });
 
-    // Abertura Manhã (6h)
     cron.schedule('0 6 * * *', async () => {
         const groups = await sock.groupFetchAllParticipating();
         for (let id in groups) { 
@@ -173,7 +298,6 @@ async function connectToWhatsApp() {
         }
     }, { timezone: "America/Sao_Paulo" });
 
-    // ROTINAS DE ENGAJAMENTO (11:30, 12:00, 13:00)
     cron.schedule('30 11 * * *', async () => {
         const groups = await sock.groupFetchAllParticipating();
         for (let id in groups) { 
@@ -193,7 +317,7 @@ async function connectToWhatsApp() {
         const groups = await sock.groupFetchAllParticipating();
         for (let id in groups) { 
             await sock.groupSettingUpdate(id, 'not_announcement');
-            await sock.sendMessage(id, { text: "𝑮𝒓𝒖𝒑𝒐 𝒂𝒃𝒆𝒓𝒕𝒐!🍷\n𝙅𝙖́ 𝙥𝙤𝙙𝙚𝙢 𝙚𝙣𝙫𝙞𝙖𝙧 𝙨𝙚𝙪𝙨 𝙡𝙞𝙣𝙠𝙨🌷" }); 
+            await sock.sendMessage(id, { text: "𝑮𝒓𝒖𝒑𝒐 𝒂𝒃𝒆𝒓𝒕𝒐!🍷\n𝙅𝙖́ 𝙥οдем 𝙚𝙣𝙫𝙞𝙖𝙧 𝙨𝙚𝙪𝙨 𝙡𝙞𝙣𝙠𝙨🌷" }); 
         }
     }, { timezone: "America/Sao_Paulo" });
 }
