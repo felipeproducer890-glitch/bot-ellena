@@ -25,7 +25,14 @@ app.listen(process.env.PORT || 10000);
 // --- CONFIGURAÇÕES ---
 const MEU_NUMERO = "5598981086106"; 
 const AUTORIZADOS = ['5598981086106@s.whatsapp.net', '559885508477@s.whatsapp.net', '559881776969@s.whatsapp.net'];
-const PALAVRAS_BANIDAS = ['puta', 'caralho', 'krlh', 'crlh', 'porra', 'prr', 'desgraça', 'pt', 'misera', 'urubu'];
+
+const PALAVRAS_BANIDAS = [
+    'puta', 'caralho', 'krlh', 'crlh', 'porra', 'prr', 'desgraça', 'pt', 'misera', 'urubu',
+    'putinho', 'putinha', 'vagabunda', 'vagabundo', 'pau no cu', 'pnc', 'lula', 'viado', 
+    'viadinho', 'gay', 'filho da puta', 'fdp', 'satanás', 'satanas', 'msr', 'mzr', 'mizera', 
+    'porraa', 'krl', 'putao', 'putão', 'cu', 'rola', 'roludo', 'pika', 'pica', 'pepeka', 
+    'ppk', 'xereca', 'xrc', 'xrk', 'miseravel', 'mizeravel'
+];
 const regexPalavrao = new RegExp(`\\b(${PALAVRAS_BANIDAS.join('|')})\\b`, 'i');
 const avisos = {}; 
 let codigoJaSolicitado = false;
@@ -164,127 +171,132 @@ async function connectToWhatsApp() {
         }
     });
 
-    // --- ESCUTA DE MENSAGENS ---
+    // --- ESCUTA DE MENSAGENS CORRIGIDA ---
     sock.ev.on("messages.upsert", async (m) => {
-        const msg = m.messages[0];
-        if (!msg.message || msg.key.fromMe) return;
-        const from = msg.key.remoteJid;
-        const sender = msg.key.participant || msg.key.remoteJid;
-        const texto = (msg.message.conversation || msg.message.extendedTextMessage?.text || "").toLowerCase().trim();
+        for (const msg of m.messages) {
+            if (!msg.message || msg.key.fromMe) continue;
+            
+            const from = msg.key.remoteJid;
+            const sender = msg.key.participant || msg.key.remoteJid;
+            const texto = (msg.message.conversation || msg.message.extendedTextMessage?.text || "").toLowerCase().trim();
 
-        // --- SISTEMA INTELIGENTE DE FILTRAGEM DE LINKS ---
-        const linksEncontrados = texto.match(/https?:\/\/[^\s]+|www\.[^\s]+/gi);
-        
-        if (from.endsWith('@g.us') && linksEncontrados && !AUTORIZADOS.includes(sender)) {
-            let deveApagar = false;
-            const temParceria = texto.includes("parceria");
+            // --- SISTEMA INTELIGENTE DE FILTRAGEM DE LINKS ---
+            const linksEncontrados = texto.match(/https?:\/\/[^\s]+|www\.[^\s]+/gi);
+            
+            if (from.endsWith('@g.us') && linksEncontrados && !AUTORIZADOS.includes(sender)) {
+                let deveApagar = false;
+                const temParceria = texto.includes("parceria");
 
-            for (let link of linksEncontrados) {
-                const isInstagram = link.includes("instagram.com");
-                const isTikTok = link.includes("tiktok.com");
-                const isKwai = link.includes("kwai"); 
-                const isWhatsApp = link.includes("wa.me") || link.includes("whatsapp.com") || link.includes("chat.whatsapp");
+                for (let link of linksEncontrados) {
+                    const isInstagram = link.includes("instagram.com");
+                    const isTikTok = link.includes("tiktok.com");
+                    const isKwai = link.includes("kwai"); 
+                    const isWhatsApp = link.includes("wa.me") || link.includes("whatsapp.com") || link.includes("chat.whatsapp");
 
-                if (isWhatsApp) {
-                    if (!temParceria) { deveApagar = true; break; }
-                } else if (!isInstagram && !isTikTok && !isKwai) {
-                    deveApagar = true;
-                    break;
+                    if (isWhatsApp) {
+                        if (!temParceria) { deveApagar = true; break; }
+                    } else if (!isInstagram && !isTikTok && !isKwai) {
+                        deveApagar = true;
+                        break;
+                    }
+                }
+
+                if (deveApagar) {
+                    try {
+                        await sock.sendMessage(from, { delete: msg.key }); 
+                        // MENSAGEM ALTERADA AQUI: Marca apenas quem enviou o link proibido
+                        await sock.sendMessage(from, { 
+                            text: `🚫 @${sender.split('@')[0]}, 𝑳𝒊𝒏𝒌 𝒏𝒂̃𝒐 𝒂𝒖𝒕𝒐𝒓𝒊𝒛𝒂𝒅𝒐\n𝘾𝙤𝙣𝙩𝙧𝙖𝙩𝙚 𝙖𝙡𝙜𝙪𝙢 𝙖𝙙𝙢 𝙥𝙧𝙖 𝙥𝙖𝙧𝙘𝙚𝙧𝙞𝙖🫵🏽`, 
+                            mentions: [sender] 
+                        });
+                    } catch (e) { console.log("Erro ao deletar link: " + e); }
+                    continue; 
                 }
             }
 
-            if (deveApagar) {
+            // --- SISTEMA DE STRIKES (PALAVRÕES) ---
+            if (from.endsWith('@g.us') && regexPalavrao.test(texto)) {
                 try {
-                    await sock.sendMessage(from, { delete: msg.key }); 
-                    const admsMencionados = AUTORIZADOS.map(id => `@${id.split('@')[0]}`).join(' ');
-                    await sock.sendMessage(from, { 
-                        text: `🚫𝑳𝒊𝒏𝒌 𝒏𝒂̃𝒐 𝒂𝒖𝒕𝒐𝒓𝒊𝒛𝒂𝒅𝒐\n𝘾𝙤𝙣𝙩𝙧𝙖𝙩𝙚 𝙖𝙡𝙜𝙪𝙢 𝙖𝙙𝙢 𝙥𝙧𝙖 𝙥𝙖𝙧𝙘𝙚𝙧𝙞𝙖🫵🏽\n\n${admsMencionados}`, 
-                        mentions: AUTORIZADOS 
-                    });
-                } catch (e) { console.log("Erro ao deletar link: " + e); }
-                return;
-            }
-        }
-
-        // --- SISTEMA DE STRIKES (PALAVRÕES) ---
-        if (from.endsWith('@g.us') && regexPalavrao.test(texto)) {
-            await sock.sendMessage(from, { delete: msg.key });
-            avisos[from] = avisos[from] || {};
-            avisos[from][sender] = (avisos[from][sender] || 0) + 1;
-            if (avisos[from][sender] >= 3) {
-                await sock.groupParticipantsUpdate(from, [sender], "remove");
-                delete avisos[from][sender];
-            } else {
-                await sock.sendMessage(from, { text: `⚠️ Strike [${avisos[from][sender]}/3]: @${sender.split('@')[0]}`, mentions: [sender] });
-            }
-            return;
-        }
-
-        // --- COMANDO DE MENU INTERATIVO ---
-        if (texto === '.oi' || texto === '.menu') {
-            if (!from.endsWith('@g.us') && AUTORIZADOS.includes(sender)) {
-                try {
-                    const groups = await sock.groupFetchAllParticipating();
-                    const groupList = Object.values(groups).sort((a, b) => (a.subject || "").localeCompare(b.subject || ""));
+                    await sock.sendMessage(from, { delete: msg.key });
+                    avisos[from] = avisos[from] || {};
+                    avisos[from][sender] = (avisos[from][sender] || 0) + 1;
                     
-                    if (groupList.length === 0) {
-                        await sock.sendMessage(from, { text: "🌸 *ELLENA BOT*\n\nVocê ainda não adicionou o bot em nenhum grupo." });
-                        return;
-                    }
-
-                    let resposta = "🌸 *ELLENA BOT - PAINEL DE CONTROLE* 🌸\n\n";
-                    resposta += "Escolha o grupo que deseja gerenciar remotamente:\n\n";
-                    
-                    groupList.forEach((group, index) => {
-                        resposta += `${index + 1}️⃣ *${group.subject}*\n`;
-                        resposta += `  ↳ Abrir: \`.abrir ${index + 1}\`\n`;
-                        resposta += `  ↳ Fechar: \`.fechar ${index + 1}\`\n\n`;
-                    });
-
-                    resposta += "💡 _Dica: Basta copiar e enviar o comando correspondente ao grupo desejado._";
-                    await sock.sendMessage(from, { text: resposta });
-                } catch (e) {
-                    await sock.sendMessage(from, { text: "❌ Erro ao ler a lista de grupos." });
-                }
-            } else {
-                await sock.sendMessage(from, { text: "🌸 *ELLENA BOT*\n\n.adms | .menu\n\n*ADM:*\n.abrir | .fechar | .ban" });
-            }
-            return;
-        }
-
-        // --- EXECUÇÃO DE COMANDOS DO PAINEL REMOTO (NO PRIVADO) ---
-        if (AUTORIZADOS.includes(sender)) {
-            if (from.endsWith('@g.us')) {
-                if (texto === '.abrir') await sock.groupSettingUpdate(from, 'not_announcement');
-                if (texto === '.fechar') await sock.groupSettingUpdate(from, 'announcement');
-            } else {
-                if (texto.startsWith('.abrir ')) {
-                    const idx = parseInt(texto.replace('.abrir ', '').trim()) - 1;
-                    const groups = await sock.groupFetchAllParticipating();
-                    const groupList = Object.values(groups).sort((a, b) => (a.subject || "").localeCompare(b.subject || ""));
-                    
-                    if (groupList[idx]) {
-                        await sock.groupSettingUpdate(groupList[idx].id, 'not_announcement');
-                        await sock.sendMessage(from, { text: `✅ O grupo *${groupList[idx].subject}* foi ABERTO com sucesso remotamente!` });
+                    if (avisos[from][sender] >= 3) {
+                        await sock.groupParticipantsUpdate(from, [sender], "remove");
+                        delete avisos[from][sender];
                     } else {
-                        await sock.sendMessage(from, { text: "❌ Número do grupo inválido. Verifique o `.menu`" });
+                        await sock.sendMessage(from, { text: `⚠️ Strike [${avisos[from][sender]}/3]: @${sender.split('@')[0]}`, mentions: [sender] });
                     }
-                }
+                } catch (e) { console.log("Erro no strike: " + e); }
+                continue; 
+            }
 
-                if (texto.startsWith('.fechar ')) {
-                    const idx = parseInt(texto.replace('.fechar ', '').trim()) - 1;
-                    const groups = await sock.groupFetchAllParticipating();
-                    const groupList = Object.values(groups).sort((a, b) => (a.subject || "").localeCompare(b.subject || ""));
-                    
-                    if (groupList[idx]) {
-                        await sock.groupSettingUpdate(groupList[idx].id, 'announcement');
-                        await sock.sendMessage(from, { text: `🔒 O grupo *${groupList[idx].subject}* foi FECHADO com sucesso remotamente!` });
-                    } else {
-                        await sock.sendMessage(from, { text: "❌ Número do grupo inválido. Verifique o `.menu`" });
+            // --- COMANDO DE MENU INTERATIVO ---
+            if (texto === '.oi' || texto === '.menu') {
+                if (!from.endsWith('@g.us') && AUTORIZADOS.includes(sender)) {
+                    try {
+                        const groups = await sock.groupFetchAllParticipating();
+                        const groupList = Object.values(groups).sort((a, b) => (a.subject || "").localeCompare(b.subject || ""));
+                        
+                        if (groupList.length === 0) {
+                            await sock.sendMessage(from, { text: "🌸 *ELLENA BOT*\n\nVocê ainda não adicionou o bot em nenhum grupo." });
+                            continue;
+                        }
+
+                        let resposta = "🌸 *ELLENA BOT - PAINEL DE CONTROLE* 🌸\n\n";
+                        resposta += "Escolha o grupo que deseja gerenciar remotamente:\n\n";
+                        
+                        groupList.forEach((group, index) => {
+                            resposta += `${index + 1}️⃣ *${group.subject}*\n`;
+                            resposta += `  ↳ Abrir: \`.abrir ${index + 1}\`\n`;
+                            resposta += `  ↳ Fechar: \`.fechar ${index + 1}\`\n\n`;
+                        });
+
+                        resposta += "💡 _Dica: Basta copiar e enviar o comando correspondente ao grupo desejado._";
+                        await sock.sendMessage(from, { text: resposta });
+                    } catch (e) {
+                        await sock.sendMessage(from, { text: "❌ Erro ao ler a lista de grupos." });
+                    }
+                } else {
+                    await sock.sendMessage(from, { text: "🌸 *ELLENA BOT*\n\n.adms | .menu\n\n*ADM:*\n.abrir | .fechar | .ban" });
+                }
+                continue;
+            }
+
+            // --- EXECUÇÃO DE COMANDOS DO PAINEL REMOTO (NO PRIVADO) ---
+            if (AUTORIZADOS.includes(sender)) {
+                if (from.endsWith('@g.us')) {
+                    if (texto === '.abrir') await sock.groupSettingUpdate(from, 'not_announcement');
+                    if (texto === '.fechar') await sock.groupSettingUpdate(from, 'announcement');
+                } else {
+                    if (texto.startsWith('.abrir ')) {
+                        const idx = parseInt(texto.replace('.abrir ', '').trim()) - 1;
+                        const groups = await sock.groupFetchAllParticipating();
+                        const groupList = Object.values(groups).sort((a, b) => (a.subject || "").localeCompare(b.subject || ""));
+                        
+                        if (groupList[idx]) {
+                            await sock.groupSettingUpdate(groupList[idx].id, 'not_announcement');
+                            await sock.sendMessage(from, { text: `✅ O grupo *${groupList[idx].subject}* foi ABERTO com sucesso remotamente!` });
+                        } else {
+                            await sock.sendMessage(from, { text: "❌ Número do grupo inválido. Verifique o `.menu`" });
+                        }
+                    }
+
+                    if (texto.startsWith('.fechar ')) {
+                        const idx = parseInt(texto.replace('.fechar ', '').trim()) - 1;
+                        const groups = await sock.groupFetchAllParticipating();
+                        const groupList = Object.values(groups).sort((a, b) => (a.subject || "").localeCompare(b.subject || ""));
+                        
+                        if (groupList[idx]) {
+                            await sock.groupSettingUpdate(groupList[idx].id, 'announcement');
+                            await sock.sendMessage(from, { text: `🔒 O grupo *${groupList[idx].subject}* foi FECHADO com sucesso remotamente!` });
+                        } else {
+                            await sock.sendMessage(from, { text: "❌ Número do grupo inválido. Verifique o `.menu`" });
+                        }
                     }
                 }
             }
-        }
+        } 
     });
 
     // --- ROTINAS AUTOMATIZADAS (CRON JOBS) ---
