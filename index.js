@@ -171,13 +171,17 @@ async function connectToWhatsApp() {
         }
     });
 
-    // --- ESCUTA DE MENSAGENS CORRIGIDA ---
+    // --- ESCUTA DE MENSAGENS ---
     sock.ev.on("messages.upsert", async (m) => {
         for (const msg of m.messages) {
             if (!msg.message || msg.key.fromMe) continue;
             
             const from = msg.key.remoteJid;
-            const sender = msg.key.participant || msg.key.remoteJid;
+            
+            // 🛑 A MÁGICA ACONTECE AQUI: Limpa o ID do aparelho para o WhatsApp reconhecer os ADMs!
+            let senderRaw = msg.key.participant || msg.key.remoteJid;
+            const sender = senderRaw.replace(/:\d+/, ""); 
+            
             const texto = (msg.message.conversation || msg.message.extendedTextMessage?.text || "").toLowerCase().trim();
 
             // --- SISTEMA INTELIGENTE DE FILTRAGEM DE LINKS ---
@@ -204,7 +208,6 @@ async function connectToWhatsApp() {
                 if (deveApagar) {
                     try {
                         await sock.sendMessage(from, { delete: msg.key }); 
-                        // MENSAGEM ALTERADA AQUI: Marca apenas quem enviou o link proibido
                         await sock.sendMessage(from, { 
                             text: `🚫 @${sender.split('@')[0]}, 𝑳𝒊𝒏𝒌 𝒏𝒂̃𝒐 𝒂𝒖𝒕𝒐𝒓𝒊𝒛𝒂𝒅𝒐\n𝘾𝙤𝙣𝙩𝙧𝙖𝙩𝙚 𝙖𝙡𝙜𝙪𝙢 𝙖𝙙𝙢 𝙥𝙧𝙖 𝙥𝙖𝙧𝙘𝙚𝙧𝙞𝙖🫵🏽`, 
                             mentions: [sender] 
