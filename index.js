@@ -65,13 +65,19 @@ async function connectToWhatsApp() {
         }
     });
 
-    // --- MÓDULO DE BOAS-VINDAS ---
+    // --- 1. MÓDULO DE BOAS-VINDAS ---
     sock.ev.on("group-participants.update", async (anu) => {
         if (anu.action === 'add') {
             const metadata = await sock.groupMetadata(anu.id);
+            const nomeGrupo = metadata.subject; 
+            
             for (const num of anu.participants) {
-                const saudacao = `Olá @${num.split('@')[0]}, bem-vindo ao ${metadata.subject}!\n\n*REGRAS:* Sem ofensas, sem links e sem palavrões.\n\nADMs: @eofelipeaqui e @_.evelyn.sx`;
-                await sock.sendMessage(anu.id, { text: saudacao, mentions: [num] });
+                const saudacao = `🍷Sejam muito bem-vindos(a) @${num.split('@')[0]} ao grupo *${nomeGrupo}*\n\npara mantermos o grupo organizado e agradável para todos, por favor, fique atento às nossas diretrizes.\n\n⚠️*ATENÇÃO*:SIGA AS REGRAS\n\n🪻 sᴇᴍ ᴄᴏɴᴛᴇᴜ́ᴅᴏ +18\n🍷 sᴇᴍ ʟɪɴᴋs sᴇ ɴᴀ̃ᴏ ᴛɪᴠᴇʀ ᴘᴀʀᴄᴇʀɪᴀ\n🪻 sᴇᴍ ʟɪɴᴋs ᴅᴇ ᴊᴏɢᴏs ᴅᴇ ᴀᴘᴏsᴛᴀs 💀\n🍷 ɴᴀ̃ᴏ ᴘᴏᴅᴇ ɪɴᴠᴀᴅɪʀ ᴘᴠ sᴇᴍ ᴘᴇʀᴍɪssᴀ̃ᴏ ᴇ ɴᴀᴅᴀ ǫᴜᴇ ᴇɴᴠᴏʟᴠᴀ ᴠᴇɴᴅᴀ\n 🍷 sᴇᴍ ᴘᴀʟᴀᴠʀᴏ̃ᴇs\n\nADMs\n\n🍷https://www.instagram.com/_.evelyn.sx?igsh=MTJrMWc0dzZkc2xsbg==\n\n 🍷https://www.instagram.com/eofelipeaqui/`;
+                
+                await sock.sendMessage(anu.id, { 
+                    text: saudacao, 
+                    mentions: [num] 
+                });
             }
         }
     });
@@ -84,6 +90,47 @@ async function connectToWhatsApp() {
         const sender = msg.key.participant || msg.key.remoteJid;
         const texto = (msg.message.conversation || msg.message.extendedTextMessage?.text || "").toLowerCase().trim();
 
+        // --- 2. SISTEMA INTELIGENTE DE FILTRAGEM DE LINKS ---
+        const linksEncontrados = texto.match(/https?:\/\/[^\s]+|www\.[^\s]+/gi);
+        
+        if (from.endsWith('@g.us') && linksEncontrados && !AUTORIZADOS.includes(sender)) {
+            let deveApagar = false;
+            const temParceria = texto.includes("parceria");
+
+            for (let link of linksEncontrados) {
+                const isInstagram = link.includes("instagram.com");
+                const isTikTok = link.includes("tiktok.com");
+                const isKwai = link.includes("kwai"); // Deixa livre links do Kwai (.com, .video, etc)
+                const isWhatsApp = link.includes("wa.me") || link.includes("whatsapp.com") || link.includes("chat.whatsapp");
+
+                if (isWhatsApp) {
+                    // Se for link de WhatsApp mas NÃO tiver a palavra "parceria" no texto, apaga
+                    if (!temParceria) {
+                        deveApagar = true;
+                        break;
+                    }
+                } else if (!isInstagram && !isTikTok && !isKwai) {
+                    // Se não for Insta, TikTok nem Kwai, apaga direto
+                    deveApagar = true;
+                    break;
+                }
+            }
+
+            if (deveApagar) {
+                try {
+                    await sock.sendMessage(from, { delete: msg.key }); // Deleta o link invasor
+                    
+                    const admsMencionados = AUTORIZADOS.map(id => `@${id.split('@')[0]}`).join(' ');
+                    await sock.sendMessage(from, { 
+                        text: `🚫𝑳𝒊𝒏𝒌 𝒏𝒂̃𝒐 𝒂𝒖𝒕𝒐𝒓𝒊𝒛𝒂𝒅𝒐\n𝘾𝙤𝙣𝙩𝙧𝙖𝙩𝙚 𝙖𝙡𝙜𝙪𝙢 𝙖𝙙𝙢 𝙥𝙧𝙖 𝙥𝙖𝙧𝙘𝙚𝙧𝙞𝙖🫵🏽\n\n${admsMencionados}`, 
+                        mentions: AUTORIZADOS 
+                    });
+                } catch (e) { console.log("Erro ao deletar link: " + e); }
+                return;
+            }
+        }
+
+        // --- 3. SISTEMA DE STRIKES (PALAVRÕES) ---
         if (from.endsWith('@g.us') && regexPalavrao.test(texto)) {
             await sock.sendMessage(from, { delete: msg.key });
             avisos[from] = avisos[from] || {};
@@ -108,18 +155,25 @@ async function connectToWhatsApp() {
     });
 
     // --- ROTINAS AUTOMATIZADAS (CRON JOBS) ---
-    // Repouso Noturno
+    // Repouso Noturno (22h)
     cron.schedule('0 22 * * *', async () => {
         const groups = await sock.groupFetchAllParticipating();
-        for (let id in groups) { await sock.groupSettingUpdate(id, 'announcement'); }
+        for (let id in groups) { 
+            await sock.groupSettingUpdate(id, 'announcement'); 
+            await sock.sendMessage(id, { text: "𝗚𝗿𝘂𝗽𝗼 𝗳𝗲𝗰𝗵𝗮𝗱𝗼!!\n\n𝘁𝗲𝗻𝗵𝗮𝗺 𝘂𝗺𝗮 𝗼́𝘁𝗶𝗺𝗮 𝗻𝗼𝗶𝘁𝗲🍷" });
+        }
     }, { timezone: "America/Sao_Paulo" });
 
+    // Abertura Manhã (6h)
     cron.schedule('0 6 * * *', async () => {
         const groups = await sock.groupFetchAllParticipating();
-        for (let id in groups) { await sock.groupSettingUpdate(id, 'not_announcement'); }
+        for (let id in groups) { 
+            await sock.groupSettingUpdate(id, 'not_announcement'); 
+            await sock.sendMessage(id, { text: "𝘉𝘰𝘮𝘮 𝘥𝘪𝘢ａａ\n𝗚𝗿𝘂𝗽𝗼 𝗮𝗯𝗲𝗿𝘁𝗼!!\n\n𝗷𝗮́ 𝗽𝗼𝗱em 𝗲𝗻𝘃𝗶𝗮𝗿 𝘀𝗲𝘂𝘀 𝗹𝗶𝗻𝗸𝘀🍷" });
+        }
     }, { timezone: "America/Sao_Paulo" });
 
-    // ROTINAS DE ENGAJAMENTO
+    // ROTINAS DE ENGAJAMENTO (11:30, 12:00, 13:00)
     cron.schedule('30 11 * * *', async () => {
         const groups = await sock.groupFetchAllParticipating();
         for (let id in groups) { 
