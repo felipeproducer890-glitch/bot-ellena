@@ -1,4 +1,4 @@
-const { default: makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion, DisconnectReason, Browsers, initAuthCreds, BufferJSON, proto } = require("@whiskeysockets/baileys");
+const { default: makeWASocket, fetchLatestBaileysVersion, DisconnectReason, Browsers, initAuthCreds, BufferJSON, proto } = require("@whiskeysockets/baileys");
 const pino = require("pino");
 const express = require('express');
 const cron = require('node-cron');
@@ -99,10 +99,20 @@ async function connectToWhatsApp() {
         return;
     }
     
-    const mongoClient = new MongoClient(mongoUri);
-    await mongoClient.connect();
-    const db = mongoClient.db('ellena_bot');
-    const collection = db.collection('session');
+    let collection;
+    try {
+        console.log("🔄 Tentando conectar ao MongoDB Atlas...");
+        const mongoClient = new MongoClient(mongoUri);
+        await mongoClient.connect();
+        const db = mongoClient.db('ellena_bot');
+        collection = db.collection('session');
+        console.log("✅ Conexão com o MongoDB estabelecida com sucesso!");
+    } catch (dbError) {
+        console.log("❌ ERRO CRÍTICO AO CONECTAR NO MONGO:", dbError.message);
+        console.log("O bot vai tentar iniciar novamente em 10 segundos...");
+        setTimeout(connectToWhatsApp, 10000);
+        return;
+    }
 
     const { state, saveCreds } = await useMongoDBAuthState(collection);
     const { version } = await fetchLatestBaileysVersion();
@@ -148,7 +158,7 @@ async function connectToWhatsApp() {
             const nomeGrupo = metadata.subject; 
             
             for (const num of anu.participants) {
-                const saudacao = `🍷Sejam muito bem-vindos(a) @${num.split('@')[0]} ao grupo *${nomeGrupo}*\n\npara mantermos o grupo organizado e agradável para todos, por favor, fique atento às nossas diretrizes.\n\n⚠️*ATENÇÃO*:SIGA AS REGRAS\n\n🪻 sᴇᴍ ᴄᴏɴᴛᴇᴜ́ᴅᴏ +18\n🍷 sᴇᴍ ʟɪɴᴋs sᴇ ɴᴀ̃ᴏ ᴛɪᴠᴇʀ ᴘᴀʀᴄᴇʀɪᴀ\n🪻 sᴇᴍ ʟɪɴᴋs ᴅᴇ ᴊᴏɢᴏs ᴅᴇ ᴀᴘᴏsᴛᴀs 💀\n🍷 ɴᴀ̃ᴏ ᴘᴏᴅᴇ ɪɴᴠᴀᴅɪʀ ᴘᴠ sᴇᴍ ᴘᴇʀᴍɪssᴀ̃ᴏ ᴇ ɴᴀᴅᴀ ǫᴜᴇ ᴇɴᴠᴏʟᴠᴀ ᴠᴇɴᴅᴀ\n 🍷 sᴇᴍ ᴘᴀʟᴀᴠʀᴏ̃ᴇs\n\nADMs\n\n🍷https://www.instagram.com/_.evelyn.sx?igsh=MTJrMWc0dzZkc2xsbg==\n\n 🍷https://www.instagram.com/eofelipeaqui/`;
+                const saudacao = `🍷Sejam muito bem-vindos(a) @${num.split('@')[0]} ao grupo *${nomeGrupo}*\n\npara mantermos o grupo organizado e agradável para todos, por favor, fique atento às nossas diretrizes.\n\n⚠️*ATENÇÃO*:SIGA AS REGRAS\n\n🪻 sᴇᴍ ᴄᴏɴᴛᴇᴜ́ᴅᴏ +18\n🍷 sᴇᴍ ʟɪɴᴋs sᴇ ɴᴀ̃ᴏ ᴛɪᴠᴇʀ ᴘᴀʀᴄᴇʀɪᴀ\n🪻 sᴇᴍ ʟɪɴᴋs ᴅᴇ ᴊᴏɢᴏs ᴅᴇ ᴀᴘᴏsᴛᴀs 💀\n🍷 ɴᴀ̃ᴏ ᴘᴏᴅᴇ ɪɴᴠᴀᴅɪʀ ᴘᴠ sᴇᴍ ᴘᴇʀᴍɪssᴀ̃ᴏ ᴇ ɴᴀᴅᴀ ǫᴜе ᴇɴᴠᴏʟᴠᴀ ᴠᴇɴᴅᴀ\n 🍷 sᴇᴍ ᴘᴀʟᴀᴠʀᴏ̃ᴇs\n\nADMs\n\n🍷https://www.instagram.com/_.evelyn.sx?igsh=MTJrMWc0dzZkc2xsbg==\n\n 🍷https://www.instagram.com/eofelipeaqui/`;
                 await sock.sendMessage(anu.id, { text: saudacao, mentions: [num] });
             }
         }
@@ -212,7 +222,6 @@ async function connectToWhatsApp() {
 
         // --- COMANDO DE MENU INTERATIVO ---
         if (texto === '.oi' || texto === '.menu') {
-            // Se o comando for enviado no PRIVADO e por um ADM AUTORIZADO
             if (!from.endsWith('@g.us') && AUTORIZADOS.includes(sender)) {
                 try {
                     const groups = await sock.groupFetchAllParticipating();
@@ -238,7 +247,6 @@ async function connectToWhatsApp() {
                     await sock.sendMessage(from, { text: "❌ Erro ao ler a lista de grupos." });
                 }
             } else {
-                // Menu padrão caso seja enviado dentro de um grupo ou por alguém comum
                 await sock.sendMessage(from, { text: "🌸 *ELLENA BOT*\n\n.adms | .menu\n\n*ADM:*\n.abrir | .fechar | .ban" });
             }
             return;
@@ -247,11 +255,9 @@ async function connectToWhatsApp() {
         // --- EXECUÇÃO DE COMANDOS DO PAINEL REMOTO (NO PRIVADO) ---
         if (AUTORIZADOS.includes(sender)) {
             if (from.endsWith('@g.us')) {
-                // Comandos tradicionais executados de dentro do grupo
                 if (texto === '.abrir') await sock.groupSettingUpdate(from, 'not_announcement');
                 if (texto === '.fechar') await sock.groupSettingUpdate(from, 'announcement');
             } else {
-                // Comandos remotos via Privado (.abrir X ou .fechar X)
                 if (texto.startsWith('.abrir ')) {
                     const idx = parseInt(texto.replace('.abrir ', '').trim()) - 1;
                     const groups = await sock.groupFetchAllParticipating();
@@ -317,7 +323,7 @@ async function connectToWhatsApp() {
         const groups = await sock.groupFetchAllParticipating();
         for (let id in groups) { 
             await sock.groupSettingUpdate(id, 'not_announcement');
-            await sock.sendMessage(id, { text: "𝑮𝒓𝒖𝒑𝒐 𝒂𝒃𝒆𝒓𝒕𝒐!🍷\n𝙅𝙖́ 𝙥οдем 𝙚𝙣𝙫𝙞𝙖𝙧 𝙨𝙚𝙪𝙨 𝙡𝙞𝙣𝙠𝙨🌷" }); 
+            await sock.sendMessage(id, { text: "𝑮𝒓𝒖𝒑𝒐 𝒂𝒃𝒆𝒓𝒕𝒐!🍷\n𝙅𝙖́ 𝙥𝙤𝙙𝙚𝙢 𝙚𝙣𝙫𝙞𝙖𝙧 𝙨𝙚𝙪𝙨 𝙡𝙞𝙣𝙠𝙨🌷" }); 
         }
     }, { timezone: "America/Sao_Paulo" });
 }
