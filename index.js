@@ -18,7 +18,8 @@ const PALAVRAS_BANIDAS = [
     'putinho', 'putinha', 'vagabunda', 'vagabundo', 'pau no cu', 'pnc', 'lula', 'viado', 
     'viadinho', 'gay', 'filho da puta', 'fdp', 'satanás', 'satanas', 'msr', 'mzr', 'mizera', 
     'porraa', 'krl', 'putao', 'putão', 'cu', 'rola', 'roludo', 'pika', 'pica', 'pepeka', 
-    'ppk', 'xereca', 'xrc', 'xrk', 'miseravel', 'mizeravel'
+    'ppk', 'xereca', 'xrc', 'xrk', 'miseravel', 'mizeravel',
+    'merdar', 'doder', 'fude', 'fuder', 'fode', 'foda', 'vsfd', 'sfd'
 ];
 const regexPalavrao = new RegExp(`\\b(${PALAVRAS_BANIDAS.join('|')})\\b`, 'i');
 const avisos = {}; 
@@ -56,7 +57,19 @@ async function connectToWhatsApp() {
     }
 
     sock.ev.on("creds.update", saveCreds);
-    sock.ev.on("connection.update", (u) => { if (u.connection === "close" && u.lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut) connectToWhatsApp(); });
+
+    sock.ev.on("group-participants.update", async (anu) => {
+        if (anu.action === 'add') {
+            try {
+                const metadata = await sock.groupMetadata(anu.id);
+                const nomeGrupo = metadata.subject; 
+                for (const num of anu.participants) {
+                    const saudacao = `🍷Sejam muito bem-vindos(a) @${num.split('@')[0]} ao grupo *${nomeGrupo}*\n\n⚠️*ATENÇÃO*:SIGA AS REGRAS\n\n🪻 sᴇᴍ ᴄᴏɴᴛᴇᴜ́ᴅᴏ +18\n🍷 sᴇᴍ ʟɪɴᴋs sᴇ ɴᴀ̃ᴏ ᴛɪᴠᴇʀ ᴘᴀʀᴄᴇʀɪᴀ\n🪻 sᴇᴍ ʟɪɴᴋs ᴅᴇ ᴊᴏɢᴏs ᴅᴇ ᴀᴘᴏsᴛᴀs 💀\n🍷 ɴᴀ̃ᴏ ᴘᴏᴅᴇ ɪɴᴠᴀᴅɪʀ ᴘᴠ sᴇᴍ ᴘᴇʀᴍɪssᴀ̃ᴏ ᴇ ɴᴀᴅᴀ ǫᴜе ᴇɴᴠᴏʟᴠᴀ ᴠᴇɴᴅᴀ\n 🍷 sᴇᴍ ᴘᴀʟᴀᴠʀᴏ̃ᴇs\n\nADMs\n\n🍷https://www.instagram.com/_.evelyn.sx?igsh=MTJrMWc0dzZkc2xsbg==\n\n 🍷https://www.instagram.com/eofelipeaqui/`;
+                    await sock.sendMessage(anu.id, { text: saudacao, mentions: [num] });
+                }
+            } catch (err) { console.log("Erro ao enviar boas-vindas: " + err); }
+        }
+    });
 
     sock.ev.on("messages.upsert", async (m) => {
         for (const msg of m.messages) {
@@ -66,28 +79,7 @@ async function connectToWhatsApp() {
             const sender = senderRaw.replace(/:\d+/, ""); 
             const texto = (msg.message.conversation || msg.message.extendedTextMessage?.text || "").toLowerCase().trim();
 
-            // LOG DE DEBUG PARA VOCÊ VER NO RENDER
-            if (from.endsWith('@g.us')) console.log(`Mensagem recebida de ${sender.split('@')[0]}: "${texto}"`);
-
-            // --- FILTRO DE LINKS ---
-            const linksEncontrados = texto.match(/https?:\/\/[^\s]+|www\.[^\s]+/gi);
-            if (from.endsWith('@g.us') && linksEncontrados && !AUTORIZADOS.includes(sender)) {
-                let deveApagar = false;
-                const temParceria = texto.includes("parceria");
-                for (let link of linksEncontrados) {
-                    const isInstagram = link.includes("instagram.com"), isTikTok = link.includes("tiktok.com"), isKwai = link.includes("kwai"), isWhatsApp = link.includes("wa.me") || link.includes("whatsapp.com") || link.includes("chat.whatsapp");
-                    if (isWhatsApp ? !temParceria : (!isInstagram && !isTikTok && !isKwai)) { deveApagar = true; break; }
-                }
-                if (deveApagar) {
-                    await sock.sendMessage(from, { delete: msg.key }); 
-                    await sock.sendMessage(from, { text: `🚫 @${sender.split('@')[0]}, 𝑳𝒊𝒏𝒌 𝒏𝒂̃𝒐 𝒂𝒖𝒕𝒐𝒓𝒊𝒛𝒂𝒅𝒐\n𝘾𝙤𝙣𝙩𝙧𝙖𝙩𝙚 𝙖𝙡𝙜𝙪𝙢 𝙖𝙙𝙢 𝙥𝙧𝙖 𝙥𝙖𝙧𝙘𝙚𝙧𝙞𝙖🫵🏽`, mentions: [sender] });
-                    continue; 
-                }
-            }
-
-            // --- FILTRO DE XINGAMENTOS ---
             if (from.endsWith('@g.us') && regexPalavrao.test(texto)) {
-                console.log("Xingamento detectado! Iniciando exclusão...");
                 await sock.sendMessage(from, { delete: msg.key });
                 avisos[from] = avisos[from] || {};
                 avisos[from][sender] = (avisos[from][sender] || 0) + 1;
@@ -100,7 +92,6 @@ async function connectToWhatsApp() {
                 continue; 
             }
 
-            // --- MENU E COMANDOS ---
             if (texto === '.oi' || texto === '.menu') {
                 if (!from.endsWith('@g.us') && AUTORIZADOS.includes(sender)) {
                     const groups = Object.values(await sock.groupFetchAllParticipating()).sort((a, b) => (a.subject || "").localeCompare(b.subject || ""));
