@@ -7,22 +7,9 @@ const { MongoClient } = require('mongodb');
 const app = express();
 let qrCodeTexto = null;
 
-// --- SERVIDOR WEB ---
-app.get('/', (req, res) => {
-    if (qrCodeTexto) {
-        res.send(`
-            <div style="text-align: center; font-family: Arial, sans-serif; margin-top: 50px;">
-                <h2>🌸 Conectar Ellena Bot</h2>
-                <img src="https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qrCodeTexto)}"/>
-            </div>
-        `);
-    } else {
-        res.send('Ellena Online! 🚀');
-    }
-});
+app.get('/', (req, res) => res.send('Ellena Online! 🚀'));
 app.listen(process.env.PORT || 10000);
 
-// --- CONFIGURAÇÕES ---
 const MEU_NUMERO = "5598981086106"; 
 const AUTORIZADOS = ['5598981086106@s.whatsapp.net', '559885508477@s.whatsapp.net', '559881776969@s.whatsapp.net'];
 
@@ -37,53 +24,21 @@ const regexPalavrao = new RegExp(`\\b(${PALAVRAS_BANIDAS.join('|')})\\b`, 'i');
 const avisos = {}; 
 let codigoJaSolicitado = false;
 
-// --- FUNÇÃO DE SESSÃO MONGO ---
 async function useMongoDBAuthState(collection) {
-    const writeData = async (data, id) => {
-        await collection.replaceOne({ _id: id }, { _id: id, data: JSON.parse(JSON.stringify(data, BufferJSON.replacer)) }, { upsert: true });
-    };
-    const readData = async (id) => {
-        try { const res = await collection.findOne({ _id: id }); if (!res) return null; return JSON.parse(JSON.stringify(res.data), BufferJSON.reviver); } catch { return null; }
-    };
+    const writeData = async (data, id) => { await collection.replaceOne({ _id: id }, { _id: id, data: JSON.parse(JSON.stringify(data, BufferJSON.replacer)) }, { upsert: true }); };
+    const readData = async (id) => { try { const res = await collection.findOne({ _id: id }); if (!res) return null; return JSON.parse(JSON.stringify(res.data), BufferJSON.reviver); } catch { return null; } };
     const removeData = async (id) => { try { await collection.deleteOne({ _id: id }); } catch {} };
-
     let creds = await readData('creds');
     if (!creds) { creds = initAuthCreds(); await writeData(creds, 'creds'); }
-
     return {
-        state: {
-            creds,
-            keys: {
-                get: async (type, ids) => {
-                    const data = {};
-                    for (const id of ids) {
-                        let value = await readData(`${type}-${id}`);
-                        if (type === 'app-state-sync-key' && value) value = proto.Message.AppStateSyncKeyData.fromObject(value);
-                        data[id] = value;
-                    }
-                    return data;
-                },
-                set: async (data) => {
-                    for (const category in data) {
-                        for (const id in data[category]) {
-                            const value = data[category][id];
-                            const key = `${category}-${id}`;
-                            if (value) await writeData(value, key);
-                            else await removeData(key);
-                        }
-                    }
-                }
-            }
-        },
+        state: { creds, keys: { get: async (type, ids) => { const data = {}; for (const id of ids) { let value = await readData(`${type}-${id}`); if (type === 'app-state-sync-key' && value) value = proto.Message.AppStateSyncKeyData.fromObject(value); data[id] = value; } return data; }, set: async (data) => { for (const category in data) { for (const id in data[category]) { const value = data[category][id]; const key = `${category}-${id}`; if (value) await writeData(value, key); else await removeData(key); } } } } },
         saveCreds: async () => { await writeData(creds, 'creds'); }
     };
 }
 
-// --- CONEXÃO PRINCIPAL ---
 async function connectToWhatsApp() {
     const mongoUri = process.env.MONGODB_URI;
     if (!mongoUri) return;
-    
     let collection;
     try {
         const mongoClient = new MongoClient(mongoUri);
@@ -93,7 +48,6 @@ async function connectToWhatsApp() {
 
     const { state, saveCreds } = await useMongoDBAuthState(collection);
     const { version } = await fetchLatestBaileysVersion();
-
     const sock = makeWASocket({ version, logger: pino({ level: "silent" }), auth: state, browser: Browsers.macOS('Desktop'), printQRInTerminal: false });
 
     if (!sock.authState.creds.registered && !codigoJaSolicitado) {
@@ -102,24 +56,7 @@ async function connectToWhatsApp() {
     }
 
     sock.ev.on("creds.update", saveCreds);
-    sock.ev.on("connection.update", (u) => {
-        const { connection, lastDisconnect, qr } = u;
-        if (qr) qrCodeTexto = qr;
-        if (connection === "open") qrCodeTexto = null;
-        if (connection === "close" && lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut) connectToWhatsApp();
-    });
-
-    // --- MÓDULO DE BOAS-VINDAS ---
-    sock.ev.on("group-participants.update", async (anu) => {
-        if (anu.action === 'add') {
-            const metadata = await sock.groupMetadata(anu.id);
-            const nomeGrupo = metadata.subject; 
-            for (const num of anu.participants) {
-                const saudacao = `🍷Sejam muito bem-vindos(a) @${num.split('@')[0]} ao grupo *${nomeGrupo}*\n\n⚠️*ATENÇÃO*:SIGA AS REGRAS\n\n🪻 sᴇᴍ ᴄᴏɴᴛᴇᴜ́ᴅᴏ +18\n🍷 sᴇᴍ ʟɪɴᴋs sᴇ ɴᴀ̃ᴏ ᴛɪᴠᴇʀ ᴘᴀʀᴄᴇʀɪᴀ\n🪻 sᴇᴍ ʟɪɴᴋs ᴅᴇ ᴊᴏɢᴏs ᴅᴇ ᴀᴘᴏsᴛᴀs 💀\n🍷 ɴᴀ̃ᴏ ᴘᴏᴅᴇ ɪɴᴠᴀᴅɪʀ ᴘᴠ sᴇᴍ ᴘᴇʀᴍɪssᴀ̃ᴏ ᴇ ɴᴀᴅᴀ ǫᴜе ᴇɴᴠᴏʟᴠᴀ ᴠᴇɴᴅᴀ\n 🍷 sᴇᴍ ᴘᴀʟᴀᴠʀᴏ̃ᴇs\n\nADMs\n\n🍷https://www.instagram.com/_.evelyn.sx?igsh=MTJrMWc0dzZkc2xsbg==\n\n 🍷https://www.instagram.com/eofelipeaqui/`;
-                await sock.sendMessage(anu.id, { text: saudacao, mentions: [num] });
-            }
-        }
-    });
+    sock.ev.on("connection.update", (u) => { if (u.connection === "close" && u.lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut) connectToWhatsApp(); });
 
     sock.ev.on("messages.upsert", async (m) => {
         for (const msg of m.messages) {
@@ -128,6 +65,9 @@ async function connectToWhatsApp() {
             let senderRaw = msg.key.participant || msg.key.remoteJid;
             const sender = senderRaw.replace(/:\d+/, ""); 
             const texto = (msg.message.conversation || msg.message.extendedTextMessage?.text || "").toLowerCase().trim();
+
+            // LOG DE DEBUG PARA VOCÊ VER NO RENDER
+            if (from.endsWith('@g.us')) console.log(`Mensagem recebida de ${sender.split('@')[0]}: "${texto}"`);
 
             // --- FILTRO DE LINKS ---
             const linksEncontrados = texto.match(/https?:\/\/[^\s]+|www\.[^\s]+/gi);
@@ -145,7 +85,22 @@ async function connectToWhatsApp() {
                 }
             }
 
-            // --- MENU INTERATIVO ---
+            // --- FILTRO DE XINGAMENTOS ---
+            if (from.endsWith('@g.us') && regexPalavrao.test(texto)) {
+                console.log("Xingamento detectado! Iniciando exclusão...");
+                await sock.sendMessage(from, { delete: msg.key });
+                avisos[from] = avisos[from] || {};
+                avisos[from][sender] = (avisos[from][sender] || 0) + 1;
+                if (avisos[from][sender] >= 3) {
+                    await sock.groupParticipantsUpdate(from, [sender], "remove");
+                    delete avisos[from][sender];
+                } else {
+                    await sock.sendMessage(from, { text: `⚠️ Strike [${avisos[from][sender]}/3]: @${sender.split('@')[0]}`, mentions: [sender] });
+                }
+                continue; 
+            }
+
+            // --- MENU E COMANDOS ---
             if (texto === '.oi' || texto === '.menu') {
                 if (!from.endsWith('@g.us') && AUTORIZADOS.includes(sender)) {
                     const groups = Object.values(await sock.groupFetchAllParticipating()).sort((a, b) => (a.subject || "").localeCompare(b.subject || ""));
@@ -153,28 +108,17 @@ async function connectToWhatsApp() {
                     groups.forEach(g => { resposta += `📍 *${g.subject}*\n   ✅ \`.abrir ${g.subject}\`\n   🔒 \`.fechar ${g.subject}\`\n\n`; });
                     await sock.sendMessage(from, { text: resposta });
                 } else {
-                    await sock.sendMessage(from, { text: "🌸 *ELLENA BOT*\n\n.adms | .menu\n\n*ADM:*\n.abrir | .fechar | .ban" });
+                    await sock.sendMessage(from, { text: "🌸 *ELLENA BOT*\n\n.adms | .menu" });
                 }
-                continue;
-            }
-
-            // --- COMANDOS REMOTOS ---
-            if (AUTORIZADOS.includes(sender)) {
-                if (from.endsWith('@g.us')) {
-                    if (texto === '.abrir') await sock.groupSettingUpdate(from, 'not_announcement');
-                    if (texto === '.fechar') await sock.groupSettingUpdate(from, 'announcement');
-                } else {
-                    const groups = Object.values(await sock.groupFetchAllParticipating());
-                    if (texto.startsWith('.abrir ') || texto.startsWith('.fechar ')) {
-                        const isAbrir = texto.startsWith('.abrir ');
-                        const nomeGrupo = texto.replace(isAbrir ? '.abrir ' : '.fechar ', '').trim();
-                        const target = groups.find(g => g.subject.toLowerCase() === nomeGrupo.toLowerCase());
-                        if (target) {
-                            await sock.groupSettingUpdate(target.id, isAbrir ? 'not_announcement' : 'announcement');
-                            await sock.sendMessage(from, { text: `✅ Grupo *${target.subject}* ${isAbrir ? 'ABERTO' : 'FECHADO'} com sucesso!` });
-                        } else {
-                            await sock.sendMessage(from, { text: "❌ Grupo não encontrado." });
-                        }
+            } else if (AUTORIZADOS.includes(sender) && !from.endsWith('@g.us')) {
+                const groups = Object.values(await sock.groupFetchAllParticipating());
+                if (texto.startsWith('.abrir ') || texto.startsWith('.fechar ')) {
+                    const isAbrir = texto.startsWith('.abrir ');
+                    const nomeGrupo = texto.replace(isAbrir ? '.abrir ' : '.fechar ', '').trim();
+                    const target = groups.find(g => g.subject.toLowerCase() === nomeGrupo.toLowerCase());
+                    if (target) {
+                        await sock.groupSettingUpdate(target.id, isAbrir ? 'not_announcement' : 'announcement');
+                        await sock.sendMessage(from, { text: `✅ Grupo *${target.subject}* ${isAbrir ? 'ABERTO' : 'FECHADO'}!` });
                     }
                 }
             }
