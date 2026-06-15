@@ -1,6 +1,7 @@
 const { default: makeWASocket, fetchLatestBaileysVersion, DisconnectReason, Browsers, initAuthCreds, BufferJSON, proto } = require("@whiskeysockets/baileys");
 const pino = require("pino");
 const express = require('express');
+const cron = require('node-cron');
 const { MongoClient } = require('mongodb');
 
 const app = express();
@@ -11,12 +12,12 @@ app.get('/', (req, res) => {
     if (qrCodeTexto) {
         res.send(`
             <div style="text-align: center; font-family: Arial; margin-top: 50px;">
-                <h2>🌸 Escaneie o QR Code da Ellena</h2>
+                <h2>🌸 Ellena Bot - Escaneie para conectar</h2>
                 <img src="https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qrCodeTexto)}"/>
             </div>
         `);
     } else {
-        res.send('<h2>Ellena está Online! 🚀</h2>');
+        res.send('<h2>Ellena está Online e Operante! 🚀</h2>');
     }
 });
 app.listen(process.env.PORT || 10000);
@@ -63,7 +64,20 @@ async function connectToWhatsApp() {
 
     sock.ev.on("creds.update", saveCreds);
 
-    // --- QR CODE E CONEXÃO ---
+    // --- CRON JOBS (Automação de Horários) ---
+    // Fechar grupos 22:00 e 12:00
+    cron.schedule('0 22,12 * * *', async () => {
+        const groups = await sock.groupFetchAllParticipating();
+        for (let id in groups) { await sock.groupSettingUpdate(id, 'announcement'); }
+        console.log("Automação: Grupos fechados.");
+    });
+    // Abrir grupos 06:00 e 13:00
+    cron.schedule('0 6,13 * * *', async () => {
+        const groups = await sock.groupFetchAllParticipating();
+        for (let id in groups) { await sock.groupSettingUpdate(id, 'not_announcement'); }
+        console.log("Automação: Grupos abertos.");
+    });
+
     sock.ev.on("connection.update", (u) => {
         const { connection, lastDisconnect, qr } = u;
         if (qr) qrCodeTexto = qr;
@@ -71,7 +85,6 @@ async function connectToWhatsApp() {
         if (connection === "close" && lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut) connectToWhatsApp();
     });
 
-    // --- BOAS-VINDAS ---
     sock.ev.on("group-participants.update", async (anu) => {
         if (anu.action === 'add') {
             try {
@@ -92,6 +105,26 @@ async function connectToWhatsApp() {
             const sender = senderRaw.replace(/:\d+/, ""); 
             const texto = (msg.message.conversation || msg.message.extendedTextMessage?.text || "").toLowerCase().trim();
 
+            // --- FILTRO DE LINKS ---
+            if (from.endsWith('@g.us') && !AUTORIZADOS.includes(sender)) {
+                const links = texto.match(/https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)/gi);
+                if (links) {
+                    let deveApagar = true;
+                    const temParceria = texto.includes("parceria");
+                    for (let link of links) {
+                        const isRedeSocial = link.includes("instagram.com") || link.includes("tiktok.com") || link.includes("kwai");
+                        const isWhatsApp = link.includes("wa.me") || link.includes("chat.whatsapp.com");
+                        if (isRedeSocial || (isWhatsApp && temParceria)) deveApagar = false;
+                    }
+                    if (deveApagar) {
+                        await sock.sendMessage(from, { delete: msg.key }); 
+                        await sock.sendMessage(from, { text: `🚫 @${sender.split('@')[0]}, 𝑳𝒊𝒏𝒌 𝒏𝒂̃𝒐 𝒂𝒖𝒕𝒐𝒓𝒊𝒛𝒂𝒅𝒐!\n𝘾𝙤𝙣𝙩𝙧𝙖𝙩𝙚 𝙖𝙡𝙜𝙪𝙢 𝙖𝙙𝙢 𝙥𝙧𝙖 𝙥𝙖𝙧𝙘𝙚𝙧𝙞𝙖 🫵🏽`, mentions: [sender] });
+                        continue;
+                    }
+                }
+            }
+
+            // --- FILTRO DE XINGAMENTOS ---
             if (from.endsWith('@g.us') && regexPalavrao.test(texto)) {
                 await sock.sendMessage(from, { delete: msg.key });
                 avisos[from] = avisos[from] || {};
@@ -105,6 +138,7 @@ async function connectToWhatsApp() {
                 continue; 
             }
 
+            // --- COMANDOS ---
             if (texto === '.oi' || texto === '.menu') {
                 if (!from.endsWith('@g.us') && AUTORIZADOS.includes(sender)) {
                     const groups = Object.values(await sock.groupFetchAllParticipating()).sort((a, b) => (a.subject || "").localeCompare(b.subject || ""));
