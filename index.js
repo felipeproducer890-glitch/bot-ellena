@@ -1,13 +1,24 @@
 const { default: makeWASocket, fetchLatestBaileysVersion, DisconnectReason, Browsers, initAuthCreds, BufferJSON, proto } = require("@whiskeysockets/baileys");
 const pino = require("pino");
 const express = require('express');
-const cron = require('node-cron');
 const { MongoClient } = require('mongodb');
 
 const app = express();
 let qrCodeTexto = null;
 
-app.get('/', (req, res) => res.send('Ellena Online! 🚀'));
+// --- SERVIDOR WEB PARA QR CODE ---
+app.get('/', (req, res) => {
+    if (qrCodeTexto) {
+        res.send(`
+            <div style="text-align: center; font-family: Arial; margin-top: 50px;">
+                <h2>🌸 Escaneie o QR Code da Ellena</h2>
+                <img src="https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qrCodeTexto)}"/>
+            </div>
+        `);
+    } else {
+        res.send('<h2>Ellena está Online! 🚀</h2>');
+    }
+});
 app.listen(process.env.PORT || 10000);
 
 const MEU_NUMERO = "5598981086106"; 
@@ -23,7 +34,6 @@ const PALAVRAS_BANIDAS = [
 ];
 const regexPalavrao = new RegExp(`\\b(${PALAVRAS_BANIDAS.join('|')})\\b`, 'i');
 const avisos = {}; 
-let codigoJaSolicitado = false;
 
 async function useMongoDBAuthState(collection) {
     const writeData = async (data, id) => { await collection.replaceOne({ _id: id }, { _id: id, data: JSON.parse(JSON.stringify(data, BufferJSON.replacer)) }, { upsert: true }); };
@@ -49,25 +59,28 @@ async function connectToWhatsApp() {
 
     const { state, saveCreds } = await useMongoDBAuthState(collection);
     const { version } = await fetchLatestBaileysVersion();
-    const sock = makeWASocket({ version, logger: pino({ level: "silent" }), auth: state, browser: Browsers.macOS('Desktop'), printQRInTerminal: false });
-
-    if (!sock.authState.creds.registered && !codigoJaSolicitado) {
-        codigoJaSolicitado = true;
-        setTimeout(async () => { try { const code = await sock.requestPairingCode(MEU_NUMERO); console.log(`👉 CÓDIGO: ${code}`); } catch (err) { codigoJaSolicitado = false; } }, 7000);
-    }
+    const sock = makeWASocket({ version, logger: pino({ level: "silent" }), auth: state, browser: Browsers.macOS('Desktop'), printQRInTerminal: true });
 
     sock.ev.on("creds.update", saveCreds);
 
+    // --- QR CODE E CONEXÃO ---
+    sock.ev.on("connection.update", (u) => {
+        const { connection, lastDisconnect, qr } = u;
+        if (qr) qrCodeTexto = qr;
+        if (connection === "open") qrCodeTexto = null;
+        if (connection === "close" && lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut) connectToWhatsApp();
+    });
+
+    // --- BOAS-VINDAS ---
     sock.ev.on("group-participants.update", async (anu) => {
         if (anu.action === 'add') {
             try {
                 const metadata = await sock.groupMetadata(anu.id);
-                const nomeGrupo = metadata.subject; 
                 for (const num of anu.participants) {
-                    const saudacao = `🍷Sejam muito bem-vindos(a) @${num.split('@')[0]} ao grupo *${nomeGrupo}*\n\n⚠️*ATENÇÃO*:SIGA AS REGRAS\n\n🪻 sᴇᴍ ᴄᴏɴᴛᴇᴜ́ᴅᴏ +18\n🍷 sᴇᴍ ʟɪɴᴋs sᴇ ɴᴀ̃ᴏ ᴛɪᴠᴇʀ ᴘᴀʀᴄᴇʀɪᴀ\n🪻 sᴇᴍ ʟɪɴᴋs ᴅᴇ ᴊᴏɢᴏs ᴅᴇ ᴀᴘᴏsᴛᴀs 💀\n🍷 ɴᴀ̃ᴏ ᴘᴏᴅᴇ ɪɴᴠᴀᴅɪʀ ᴘᴠ sᴇᴍ ᴘᴇʀᴍɪssᴀ̃ᴏ ᴇ ɴᴀᴅᴀ ǫᴜе ᴇɴᴠᴏʟᴠᴀ ᴠᴇɴᴅᴀ\n 🍷 sᴇᴍ ᴘᴀʟᴀᴠʀᴏ̃ᴇs\n\nADMs\n\n🍷https://www.instagram.com/_.evelyn.sx?igsh=MTJrMWc0dzZkc2xsbg==\n\n 🍷https://www.instagram.com/eofelipeaqui/`;
+                    const saudacao = `🍷Sejam muito bem-vindos(a) @${num.split('@')[0]} ao grupo *${metadata.subject}*\n\n⚠️*ATENÇÃO*:SIGA AS REGRAS\n\n🪻 sᴇᴍ ᴄᴏɴᴛᴇᴜ́ᴅᴏ +18\n🍷 sᴇᴍ ʟɪɴᴋs sᴇ ɴᴀ̃ᴏ ᴛɪᴠᴇʀ ᴘᴀʀᴄᴇʀɪᴀ\n🪻 sᴇᴍ ʟɪɴᴋs ᴅᴇ ᴊᴏɢᴏs ᴅᴇ ᴀᴘᴏsᴛᴀs 💀\n🍷 ɴᴀ̃ᴏ ᴘᴏᴅᴇ ɪɴᴠᴀᴅɪʀ ᴘᴠ sᴇᴍ ᴘᴇʀᴍɪssᴀ̃ᴏ ᴇ ɴᴀᴅᴀ ǫᴜе ᴇɴᴠᴏʟᴠᴀ ᴠᴇɴᴅᴀ\n 🍷 sᴇᴍ ᴘᴀʟᴀᴠʀᴏ̃ᴇs\n\nADMs\n\n🍷https://www.instagram.com/_.evelyn.sx?igsh=MTJrMWc0dzZkc2xsbg==\n\n 🍷https://www.instagram.com/eofelipeaqui/`;
                     await sock.sendMessage(anu.id, { text: saudacao, mentions: [num] });
                 }
-            } catch (err) { console.log("Erro ao enviar boas-vindas: " + err); }
+            } catch (err) { console.log("Erro boas-vindas: " + err); }
         }
     });
 
